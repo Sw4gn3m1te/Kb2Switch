@@ -1,59 +1,53 @@
 #include "keymap.h"
 
-#include <stddef.h>
+#include <stdio.h>
 
 #include "class/hid/hid.h"
+#include "settings.h"
 
 #define STICK_FULL 127
 #define STICK_HALF 64
 
-typedef enum {
-    ACT_BUTTON,
-    ACT_DPAD,
-    ACT_LSTICK,
-    ACT_RSTICK,
-    ACT_HALF_TILT,
-} action_t;
+extern const keymap_t *const keymaps[];
+extern const uint8_t keymap_count;
 
-typedef struct {
-    uint8_t usage;
-    uint8_t action;
-    uint16_t arg;
-} keymap_entry_t;
+static uint8_t active;
 
-static const keymap_entry_t keymap[] = {
-    {HID_KEY_W, ACT_LSTICK, PAD_DIR_UP},
-    {HID_KEY_A, ACT_LSTICK, PAD_DIR_LEFT},
-    {HID_KEY_S, ACT_LSTICK, PAD_DIR_DOWN},
-    {HID_KEY_D, ACT_LSTICK, PAD_DIR_RIGHT},
+static void log_active(void) {
+    printf("keymap: %u %s\n", active + 1, keymaps[active]->name);
+}
 
-    {HID_KEY_I, ACT_RSTICK, PAD_DIR_UP},
-    {HID_KEY_J, ACT_RSTICK, PAD_DIR_LEFT},
-    {HID_KEY_K, ACT_RSTICK, PAD_DIR_DOWN},
-    {HID_KEY_L, ACT_RSTICK, PAD_DIR_RIGHT},
+void keymap_init(void) {
+    uint8_t idx = settings_load_keymap();
+    active = idx < keymap_count ? idx : 0;
+    log_active();
+}
 
-    {HID_KEY_ARROW_UP, ACT_DPAD, PAD_DIR_UP},
-    {HID_KEY_ARROW_DOWN, ACT_DPAD, PAD_DIR_DOWN},
-    {HID_KEY_ARROW_LEFT, ACT_DPAD, PAD_DIR_LEFT},
-    {HID_KEY_ARROW_RIGHT, ACT_DPAD, PAD_DIR_RIGHT},
+static void select_keymap(uint8_t idx) {
+    if (idx >= keymap_count || idx == active) return;
+    active = idx;
+    log_active();
+    settings_save_keymap(idx);
+}
 
-    {HID_KEY_SPACE, ACT_BUTTON, PAD_BTN_A},
-    {HID_KEY_SHIFT_LEFT, ACT_BUTTON, PAD_BTN_B},
-    {HID_KEY_E, ACT_BUTTON, PAD_BTN_X},
-    {HID_KEY_Q, ACT_BUTTON, PAD_BTN_Y},
-    {HID_KEY_R, ACT_BUTTON, PAD_BTN_L},
-    {HID_KEY_F, ACT_BUTTON, PAD_BTN_ZL},
-    {HID_KEY_U, ACT_BUTTON, PAD_BTN_R},
-    {HID_KEY_O, ACT_BUTTON, PAD_BTN_ZR},
-    {HID_KEY_ENTER, ACT_BUTTON, PAD_BTN_PLUS},
-    {HID_KEY_BACKSPACE, ACT_BUTTON, PAD_BTN_MINUS},
-    {HID_KEY_C, ACT_BUTTON, PAD_BTN_LSTICK},
-    {HID_KEY_V, ACT_BUTTON, PAD_BTN_RSTICK},
-    {HID_KEY_H, ACT_BUTTON, PAD_BTN_HOME},
-    {HID_KEY_P, ACT_BUTTON, PAD_BTN_CAPTURE},
+// Neutral only while a digit is part of the chord, so Ctrl/Shift stay usable as game keys
+static bool handle_hotkey(const keyset_t *keys) {
+    static uint16_t prev_digits;
+    uint16_t digits = 0;
+    for (uint8_t i = 0; i < KEYMAP_SLOTS; i++) {
+        if (keyset_has(keys, HID_KEY_1 + i)) digits |= 1u << i; // HID_KEY_1..9 then HID_KEY_0
+    }
+    uint16_t pressed = digits & ~prev_digits;
+    prev_digits = digits;
 
-    {HID_KEY_CONTROL_LEFT, ACT_HALF_TILT, 0},
-};
+    bool ctrl = keyset_has(keys, HID_KEY_CONTROL_LEFT) || keyset_has(keys, HID_KEY_CONTROL_RIGHT);
+    bool shift = keyset_has(keys, HID_KEY_SHIFT_LEFT) || keyset_has(keys, HID_KEY_SHIFT_RIGHT);
+    if (!(ctrl && shift && digits)) return false;
+    for (uint8_t i = 0; i < KEYMAP_SLOTS; i++) {
+        if (pressed & (1u << i)) select_keymap(i);
+    }
+    return true;
+}
 
 static uint8_t cancel_opposites(uint8_t dir) {
     if ((dir & PAD_DIR_UP) && (dir & PAD_DIR_DOWN)) dir &= (uint8_t)~(PAD_DIR_UP | PAD_DIR_DOWN);
@@ -71,12 +65,17 @@ static void dir_to_stick(uint8_t dir, bool half, int8_t *x, int8_t *y) {
 }
 
 void keymap_apply(const keyset_t *keys, pad_state_t *pad) {
+    if (handle_hotkey(keys)) {
+        *pad = (pad_state_t){0};
+        return;
+    }
+
     uint16_t buttons = 0;
     uint8_t dpad = 0, ldir = 0, rdir = 0;
-    bool half = false;
+    bool half = false, follow = false;
 
-    for (size_t i = 0; i < sizeof keymap / sizeof keymap[0]; i++) {
-        const keymap_entry_t *e = &keymap[i];
+    const keymap_entry_t *e = keymaps[active]->entries;
+    for (const keymap_entry_t *end = e + KEYMAP_MAX_ENTRIES; e < end && e->usage; e++) {
         if (!keyset_has(keys, e->usage)) continue;
         switch (e->action) {
             case ACT_BUTTON: buttons |= e->arg; break;
@@ -84,11 +83,13 @@ void keymap_apply(const keyset_t *keys, pad_state_t *pad) {
             case ACT_LSTICK: ldir |= (uint8_t)e->arg; break;
             case ACT_RSTICK: rdir |= (uint8_t)e->arg; break;
             case ACT_HALF_TILT: half = true; break;
+            case ACT_RSTICK_FOLLOW: follow = true; break;
         }
     }
+    if (follow) rdir |= ldir;
 
     pad->buttons = buttons;
     pad->dpad = cancel_opposites(dpad);
     dir_to_stick(cancel_opposites(ldir), half, &pad->lx, &pad->ly);
-    dir_to_stick(cancel_opposites(rdir), half, &pad->rx, &pad->ry);
+    dir_to_stick(cancel_opposites(rdir), false, &pad->rx, &pad->ry);
 }

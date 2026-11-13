@@ -73,7 +73,10 @@ Rejected: Uno R3 (no USB host, no BT, too slow for bit-banged host), ESP32-S3 (B
 | `tusb_config.h` | TinyUSB dual-role config |
 | `kb_host.c` | Core 1: PIO-USB host, HID boot-protocol keyboards (up to 4, hubs ok) → key bitmap. NKRO later |
 | `usb_descriptors.c` | Wired USB device/config/HID/string descriptors |
-| `keymap.c` | Key set → `pad_state` (buttons, hat, sticks). Compile-time table |
+| `keymap.c` | Key set → `pad_state` (buttons, hat, sticks) via active keymap. Ctrl+Shift+1..9,0 hotkey selects keymap |
+| `keymap_def.h` | Authoring macros for `firmware/keymaps/*.c` (`KEYMAP`, `BTN`, `DPAD`, `LSTICK`, `RSTICK`, `HALF_TILT`) |
+| `keymaps_registry.c.in` | Template; CMake generates the keymap list from `firmware/keymaps/*.c` |
+| `settings.c` | Persistent settings (selected keymap) in flash sector at `flash end − 4 sectors`, below BTstack bank + RP2350-E10 sector. Writes via `flash_safe_execute` (pauses core 1 briefly) |
 | `pad_state.h` | Neutral controller state struct used by all outputs |
 | `out_usb_horipad.c` | Wired output: HORIPAD-compatible HID (VID `0x0F0D` PID `0x0092`), no handshake needed |
 | `procon.c` | Pro Controller protocol core: 0x30 input reports, 0x21 subcommand replies (device info, SPI flash reads for calibration/colors, report mode, player lights, …) |
@@ -95,7 +98,25 @@ Rejected: Uno R3 (no USB host, no BT, too slow for bit-banged host), ESP32-S3 (B
 - Switch setting: *Pro Controller Wired Communication = ON*.
 - 8-byte HORIPAD report: buttons (2 B), hat, LX, LY, RX, RY, vendor.
 
-## Default keymap
+## Keymaps
+- One file per game in `firmware/keymaps/`, auto-collected by CMake (re-run on build when files are added). 1..10 files.
+- Sorted filename order = slot: `01_default.c` → 1, `02_ssbu.c` → 2, … 10th → 0.
+- **Ctrl + Shift + 1..9, 0** (number row, left or right modifiers) switches. Pad goes neutral only once a digit is in the chord, so Ctrl/Shift held before it still reach the game briefly. Selection saved in flash, restored at boot.
+- Format:
+  ```c
+  #include "keymap_def.h"
+  KEYMAP("Zelda") {
+      LSTICK(W, UP),          // key names = HID_KEY_* without prefix
+      BTN(SPACE, A),          // PAD_BTN_* without prefix
+      DPAD(ARROW_UP, UP),
+      HALF_TILT(CONTROL_LEFT), // left stick only
+      RSTICK_FOLLOW(CAPS_LOCK),// right stick mirrors left-stick keys at full tilt while held
+  };
+  ```
+- A key may appear in several entries (e.g. `BTN(J, A)` + `HALF_TILT(J)`).
+- Max 128 entries per keymap; compiled with `-Wall -Werror` so typos fail the build.
+
+## Default keymap (`01_default.c`)
 | Key | Controller |
 |---|---|
 | W A S D | Left stick |
@@ -108,23 +129,25 @@ Rejected: Uno R3 (no USB host, no BT, too slow for bit-banged host), ESP32-S3 (B
 | C / V | Left / Right stick click |
 | H | Home |
 | P | Capture |
-| Left Ctrl (hold) | Half-tilt sticks (walk) |
-| Pause | Toggle wired ↔ Bluetooth |
+| Left Ctrl (hold) | Half-tilt left stick (walk) |
+| Ctrl + Shift + 1..9, 0 | Select keymap 1..10 (all keymaps) |
+| Pause (planned) | Toggle wired ↔ Bluetooth |
 | Scroll Lock (hold 3 s) | BT pairing mode (forget old pairing) |
 
 - Opposing directions (A+D) → center.
 - Diagonals normalized so magnitude ≈ full tilt.
 
 ## Roadmap
-1. **Wired MVP** – PIO-USB keyboard host + HORIPAD output. *Implemented, builds, untested on hardware.* MVP LED: off = no keyboard, blink = keyboard but no Switch, on = both.
+1. **Wired MVP** – PIO-USB keyboard host + HORIPAD output. *Verified on PC (joy.cpl), Switch untested.* Keymap profiles (Ctrl+Shift+digit) implemented, untested on hardware. MVP LED: off = no keyboard, blink = keyboard but no Switch, on = both.
 2. **Bluetooth** – Pro Controller over BTstack. Highest risk part, no known finished Pico implementation.
-3. **Optional** – wired Pro Controller mode reusing `procon.c` (USB handshake `0x80` cmds), keymap profiles.
+3. **Optional** – wired Pro Controller mode reusing `procon.c` (USB handshake `0x80` cmds).
 
 ## Repo layout (planned)
 ```
 firmware/
   CMakeLists.txt
   src/              modules above
+  keymaps/          one keymap per game (01_default.c, 02_ssbu.c, ...)
   lib/Pico-PIO-USB/ submodule
 docs/               wiring, flashing, pairing notes
 ```

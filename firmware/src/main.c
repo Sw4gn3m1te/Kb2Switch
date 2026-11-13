@@ -34,6 +34,7 @@ int main(void) {
     set_sys_clock_khz(120000, true);
     stdio_init_all();
     printf("kbswitch start\n");
+    keymap_init();
 
     // Must run before PIO-USB init so CYW43 takes PIO0 + low DMA channels (see kb_host.c)
     if (cyw43_arch_init()) printf("cyw43 init failed\n");

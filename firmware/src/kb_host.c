@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "hardware/sync.h"
+#include "pico/flash.h"
 #include "pico/multicore.h"
 #include "pio_usb.h"
 #include "tusb.h"
@@ -102,6 +103,8 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t idx, uint8_t const *re
 }
 
 static void core1_main(void) {
+    flash_safe_execute_core_init();
+
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
     cfg.pin_dp = KB_PIN_DP;
     // PIO1 + DMA 11 so the CYW43 driver (claims PIO0 and the lowest free DMA channels) never collides

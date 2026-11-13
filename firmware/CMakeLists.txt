@@ -28,12 +28,35 @@ set(CMAKE_C_STANDARD 11)
 
 pico_sdk_init()
 
+# Each keymaps/*.c becomes one selectable keymap; sorted filename order = Ctrl+Shift+1..9,0
+file(GLOB KEYMAP_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/keymaps/*.c)
+list(SORT KEYMAP_SOURCES)
+list(LENGTH KEYMAP_SOURCES KEYMAP_COUNT)
+if (KEYMAP_COUNT EQUAL 0 OR KEYMAP_COUNT GREATER 10)
+    message(FATAL_ERROR "firmware/keymaps/ needs 1..10 keymap files, found ${KEYMAP_COUNT}")
+endif()
+set(KEYMAP_DECLS "")
+set(KEYMAP_LIST "")
+foreach (src ${KEYMAP_SOURCES})
+    get_filename_component(stem ${src} NAME_WE)
+    string(MAKE_C_IDENTIFIER "keymap_${stem}" id)
+    set_source_files_properties(${src} PROPERTIES
+        COMPILE_DEFINITIONS KEYMAP_ID=${id}
+        COMPILE_OPTIONS "-Wall;-Werror")
+    string(APPEND KEYMAP_DECLS "extern const keymap_t ${id};\n")
+    string(APPEND KEYMAP_LIST "    &${id},\n")
+endforeach()
+configure_file(src/keymaps_registry.c.in ${CMAKE_CURRENT_BINARY_DIR}/keymaps_registry.c @ONLY)
+
 add_executable(kbswitch
     src/main.c
     src/kb_host.c
     src/keymap.c
+    src/settings.c
     src/out_usb_horipad.c
     src/usb_descriptors.c
+    ${KEYMAP_SOURCES}
+    ${CMAKE_CURRENT_BINARY_DIR}/keymaps_registry.c
 )
 
 target_include_directories(kbswitch PRIVATE src)
@@ -41,6 +64,8 @@ target_include_directories(kbswitch PRIVATE src)
 target_link_libraries(kbswitch PRIVATE
     pico_stdlib
     pico_multicore
+    pico_flash
+    hardware_flash
     pico_cyw43_arch_none
     tinyusb_device
     tinyusb_host
