@@ -74,7 +74,7 @@ Rejected: Uno R3 (no USB host, no BT, too slow for bit-banged host), ESP32-S3 (B
 | `kb_host.c` | Core 1: PIO-USB host, HID boot-protocol keyboards (up to 4, hubs ok) → key bitmap. NKRO later |
 | `usb_descriptors.c` | Wired USB device/config/HID/string descriptors |
 | `keymap.c` | Key set → `pad_state` (buttons, hat, sticks) via active keymap. Ctrl+Shift+1..9,0 hotkey selects keymap |
-| `keymap_def.h` | Authoring macros for `firmware/keymaps/*.c` (`KEYMAP`, `BTN`, `DPAD`, `LSTICK`, `RSTICK`, `HALF_TILT`) |
+| `keymap_def.h` | Authoring macros for `firmware/keymaps/*.c` (`KEYMAP`, `BTN`, `DPAD`, `LSTICK`, `RSTICK`, `HALF_TILT`, `RSTICK_FOLLOW`) |
 | `keymaps_registry.c.in` | Template; CMake generates the keymap list from `firmware/keymaps/*.c` |
 | `settings.c` | Persistent settings (selected keymap) in flash sector at `flash end − 4 sectors`, below BTstack bank + RP2350-E10 sector. Writes via `flash_safe_execute` (pauses core 1 briefly) |
 | `pad_state.h` | Neutral controller state struct used by all outputs |
@@ -110,11 +110,12 @@ Rejected: Uno R3 (no USB host, no BT, too slow for bit-banged host), ESP32-S3 (B
       BTN(SPACE, A),          // PAD_BTN_* without prefix
       DPAD(ARROW_UP, UP),
       HALF_TILT(CONTROL_LEFT), // left stick only
-      RSTICK_FOLLOW(CAPS_LOCK),// right stick mirrors left-stick keys at full tilt while held
+      RSTICK_FOLLOW(CAPS_LOCK),// while held: left-stick keys drive the right stick at full tilt, left stick neutral
   };
   ```
 - A key may appear in several entries (e.g. `BTN(J, A)` + `HALF_TILT(J)`).
 - Max 128 entries per keymap; compiled with `-Wall -Werror` so typos fail the build.
+- Key names are US HID positions. German layout: `ö` = `SEMICOLON`, `<` (left of Y) = `EUROPE_2` (NUBS), `ä` = `APOSTROPHE`, `ü` = `BRACKET_LEFT`.
 
 ## Default keymap (`01_default.c`)
 | Key | Controller |
@@ -136,6 +137,28 @@ Rejected: Uno R3 (no USB host, no BT, too slow for bit-banged host), ESP32-S3 (B
 
 - Opposing directions (A+D) → center.
 - Diagonals normalized so magnitude ≈ full tilt.
+
+## SSBU keymap (`02_ssbu.c`, slot 2)
+| Key (DE layout) | Controller |
+|---|---|
+| W A S D | Left stick |
+| J | A + half-tilt left stick (tilt attacks; dash attack while running) |
+| K | B |
+| L (hold) | Smash: WASD drives right stick at full tilt, left stick neutral |
+| Space / Caps Lock | X (jump) |
+| Shift (L/R) / ö | ZL (shield) |
+| < (NUBS, hold) | Half-tilt left stick |
+| Backspace | + |
+
+- Smash key releases the left stick so a held run direction + C-stick isn't read as a dash attack.
+- Unmapped: Y, L, R, ZR, -, D-pad, stick clicks, Home, Capture.
+
+## Latency
+Path: keyboard → PIO-USB host (core 1, busy loop) → spinlock keyset → core 0 busy loop (`keymap_apply`) → HORIPAD report → Switch.
+- No sleeps, debounce, queues or logging in the hot path. Firmware adds < 0.1 ms.
+- Gamepad IN endpoint `bInterval = 1` (1 ms, minimum at full speed). Report sent on change, resent every 8 ms otherwise.
+- Dominant factor = keyboard's own polling interval (1 ms gaming boards, often 8 ms on cheap ones). Use a 1000 Hz keyboard.
+- Known stall: keymap switch erases a flash sector synchronously (~45 ms typ, up to ~400 ms), pausing both cores. Accepted, switching doesn't happen mid-game.
 
 ## Roadmap
 1. **Wired MVP** – PIO-USB keyboard host + HORIPAD output. *Verified on PC (joy.cpl), Switch untested.* Keymap profiles (Ctrl+Shift+digit) implemented, untested on hardware. MVP LED: off = no keyboard, blink = keyboard but no Switch, on = both.

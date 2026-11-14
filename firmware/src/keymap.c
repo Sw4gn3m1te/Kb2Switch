@@ -86,7 +86,11 @@ void keymap_apply(const keyset_t *keys, pad_state_t *pad) {
             case ACT_RSTICK_FOLLOW: follow = true; break;
         }
     }
-    if (follow) rdir |= ldir;
+    // Left stick released while following: a held run direction plus C-stick would read as a dash attack in SSBU
+    if (follow) {
+        rdir |= ldir;
+        ldir = 0;
+    }
 
     pad->buttons = buttons;
     pad->dpad = cancel_opposites(dpad);

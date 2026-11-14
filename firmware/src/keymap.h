@@ -15,7 +15,7 @@ typedef enum {
     ACT_LSTICK,
     ACT_RSTICK,
     ACT_HALF_TILT,     // left stick at half magnitude
-    ACT_RSTICK_FOLLOW, // right stick takes the left stick's direction keys at full tilt
+    ACT_RSTICK_FOLLOW, // direction keys drive the right stick at full tilt, left stick neutral
 } keymap_action_t;
 
 typedef struct {
